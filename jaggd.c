@@ -11,52 +11,99 @@
 #include "fileio.h"
 #include "opts.h"
 
-libusb_device_handle *is_jaggd_dev(libusb_device *dev)
+libusb_device_handle *IsJagGD(libusb_device *dev)
 {
+	static const char *GD_STR = "RetroHQ Jaguar GameDrive";
+
 	struct libusb_device_descriptor desc;
 	libusb_device_handle *hDev;
-	char prodStr[256];
+	char str[256];
 	int strLen;
+	int res;
 
 	CHECKED_USB(libusb_get_device_descriptor(dev, &desc));
 
-	if ((desc.bDeviceClass == 0xef) && /* LIBUSB_CLASS_MISCELLANEOUS */
-	    (desc.bDeviceSubClass == 0x2) && /* ??? */
-	    (desc.bDeviceProtocol == 0x1) && /* ??? */
-	    (desc.idVendor == 0x03eb) && /* Atmel Corp. */
-	    (desc.idProduct == 0x800e) && /* ??? */
-	    (desc.iProduct != 0) /* Valid product string descriptor */) {
-		int res = libusb_open(dev, &hDev);
-
-		if (res != 0) {
-			if (res == LIBUSB_ERROR_ACCESS) {
-				printf("No permission to open suspected JagGD "
-				       "device. Try running as root.\n");
-				return NULL;
-			}
-
-			DO_USB_ERR(res, "libusb_open");
-		}
-
-		CHECKED_USB_RES(strLen, libusb_get_string_descriptor_ascii(hDev,
-					desc.iProduct,
-					(unsigned char *)prodStr,
-					sizeof(prodStr)));
-
-		if (strLen > 0 && strLen < 256 &&
-			!strcmp(prodStr, "RetroHQ Jaguar GameDrive")) {
-			printf("Found product: (%" PRIu8 ":%" PRIu8 ":%" PRIu8
-			       ") %s\n",
-			       libusb_get_bus_number(dev),
-			       libusb_get_port_number(dev),
-			       libusb_get_device_address(dev),
-			       prodStr);
-			return hDev;
-		}
-		libusb_close(hDev);
+	if ((desc.bDeviceClass != 0xef) || /* LIBUSB_CLASS_MISCELLANEOUS */
+	    (desc.bDeviceSubClass != 0x2) || /* ??? */
+	    (desc.bDeviceProtocol != 0x1) || /* ??? */
+	    (desc.idVendor != 0x03eb) || /* Atmel Corp. */
+	    (desc.idProduct != 0x800e) || /* ??? */
+	    (desc.iProduct == 0) /* Valid product string descriptor */) {
+		return NULL;
 	}
 
-	return NULL;
+	res = libusb_open(dev, &hDev);
+
+	if (res != LIBUSB_SUCCESS) {
+		if (res == LIBUSB_ERROR_ACCESS) {
+			printf("Insufficient permission to open USB device. "
+			       "Try running as root.\n");
+			return NULL;
+		}
+
+		DO_USB_ERR(res, "libusb_open");
+	}
+
+	CHECKED_USB_RES(strLen, libusb_get_string_descriptor_ascii(hDev,
+			desc.iProduct, (unsigned char *)str, sizeof(str)));
+
+	if ((strLen <= 0) || (strLen >= sizeof(str)) || strcmp(str, GD_STR)) {
+		libusb_close(hDev);
+		return NULL;
+	}
+
+	printf("Found Jaguar GameDrive - bus: %" PRIu8 " port: %" PRIu8
+	       " device: %" PRIu8 "\n",
+	       libusb_get_bus_number(dev),
+	       libusb_get_port_number(dev),
+	       libusb_get_device_address(dev));
+
+	return hDev;
+}
+
+static void CloseGD(libusb_device_handle *hGD)
+{
+	if (hGD) {
+		libusb_release_interface(hGD, 0);
+		libusb_close(hGD); hGD = NULL;
+	}
+}
+
+static libusb_device_handle *OpenGD(libusb_context *usbctx)
+{
+	libusb_device_handle *hGD = NULL;
+	libusb_device **devs;
+	ssize_t i, nDevs;
+	int config;
+
+	CHECKED_USB_RES(nDevs, libusb_get_device_list(usbctx, &devs));
+
+	for (i = 0; i < nDevs; i++) {
+		if ((hGD = IsJagGD(devs[i]))) {
+			break;
+		}
+
+	}
+
+	libusb_free_device_list(devs, 1 /* Do unref devices */);
+
+	if (!hGD) {
+		return NULL;
+	}
+
+	CHECKED_USB(libusb_get_configuration(hGD, &config));
+
+	if (config == 0) {
+		CHECKED_USB(libusb_set_configuration(hGD, 1));
+	}
+
+	/*
+	 * Claim the erroneously-numbered "0" interface the JagGD uses for its
+	 * control messages.
+	 */
+	CHECKED_USB(libusb_claim_interface(hGD, 0));
+
+	return hGD;
 }
 
 static bool CheckMemRange(const char *addrType, uint32_t addr)
@@ -79,18 +126,15 @@ static bool CheckMemRange(const char *addrType, uint32_t addr)
 int main(int argc, char *argv[])
 {
 	libusb_context *usbctx = NULL;
-	libusb_device **devs;
 	libusb_device_handle *hGD = NULL;
 	JagFile *jf = NULL;
 	char *oFileName = NULL;
-	ssize_t i, nDevs;
 	uint32_t oBase = 0x0;
 	uint32_t oSize = 0x0;
 	uint32_t oOffset = 0xffffffffu;
 	uint32_t oExec = 0x0;
 	int bytesUploaded = 0;
 	int transferSize;
-	int res;
 	int exitCode = -1;
 	bool oReset = false;
 	bool oDebug = false;
@@ -133,53 +177,12 @@ int main(int argc, char *argv[])
 
 	CHECKED_USB(libusb_init(&usbctx));
 
-	CHECKED_USB_RES(nDevs, libusb_get_device_list(usbctx, &devs));
+	hGD = OpenGD(usbctx);
 
-	if (nDevs < 0) {
-		fprintf(stderr, "!! No USB devices found\n");
-		abort();
-	}
-
-	for (i = 0; i < nDevs; i++) {
-		if ((hGD = is_jaggd_dev(devs[i]))) {
-			break;
-		}
-
-	}
-
-	libusb_free_device_list(devs, 1 /* Do unref devices */);
-
-	if (!hGD) {
+	if (hGD == NULL) {
 		fprintf(stderr, "Jaguar GameDrive not found\n");
-		return -1;
+		goto cleanup;
 	}
-
-	res = libusb_set_configuration(hGD, 1);
-
-	/* The device only supports one configuration, so failure here is OK in
-	 * the following cases:
-	 *
-	 * LIBUSB_ERROR_NOT_SUPPORTED:
-	 *   Can't configure from userspace on this OS. That's OK, we'll assume
-	 *   the OS already set the one valid configuration in the kernel.
-	 *
-	 * LIBUSB_ERROR_BUSY:
-	 *   The OS already has a driver bound to at least one interface on the
-	 *   device and can't reconfigure it without messing that driver up.
-	 *   Again, that's OK, the OS would have had to set the one valid
-	 *   configuration to initialize a driver on the device.
-	 */
-	if ((res != LIBUSB_SUCCESS) &&
-	    (res != LIBUSB_ERROR_NOT_SUPPORTED) &&
-	    (res != LIBUSB_ERROR_BUSY)) {
-		DO_USB_ERR(res, "libusb_set_configuration");
-	}
-
-	/*
-	 * Claim the erroneously-numbered "0" interface the JagGD uses for its
-	 * control messages.
-	 */
-	CHECKED_USB(libusb_claim_interface(hGD, 0));
 
 	if (oReset) {
 		printf("Reboot");
@@ -205,9 +208,6 @@ int main(int argc, char *argv[])
 					reset, /* Data */
 					sizeof(reset), /* Size */
 					2000 /* 2 second timeout */));
-
-		/* XXX reconnect and carry on */
-		goto cleanup;
 	}
 
 	if (oFileName) {
@@ -350,8 +350,7 @@ cleanup:
 	FreeFile(jf);
 
 	/* Shut down the device */
-	libusb_release_interface(hGD, 0);
-	libusb_close(hGD); hGD = NULL;
+	CloseGD(hGD);
 
 	/* Shut down libusb */
 	libusb_exit(usbctx); usbctx = NULL;
