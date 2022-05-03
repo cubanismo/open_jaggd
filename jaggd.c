@@ -61,6 +61,8 @@ int main(int argc, char *argv[])
 	libusb_device **devs;
 	libusb_device_handle *hGD = NULL;
 	ssize_t i, nDevs;
+	int res;
+	uint8_t reset[] = { 0x02, 0x00 };
 
 	CHECKED_USB(libusb_init(&usbctx));
 
@@ -83,6 +85,59 @@ int main(int argc, char *argv[])
 	if (!hGD) {
 		return -1;
 	}
+
+	res = libusb_set_configuration(hGD, 1);
+
+	/* The device only supports one configuration, so failure here is OK in
+	 * the following cases:
+	 *
+	 * LIBUSB_ERROR_NOT_SUPPORTED:
+	 *   Can't configure from userspace on this OS. That's OK, we'll assume
+	 *   the OS already set the one valid configuration in the kernel.
+	 *
+	 * LIBUSB_ERROR_BUSY:
+	 *   The OS already has a driver bound to at least one interface on the
+	 *   device and can't reconfigure it without messing that driver up.
+	 *   Again, that's OK, the OS would have had to set the one valid
+	 *   configuration to initialize a driver on the device.
+	 */
+	if ((res != LIBUSB_SUCCESS) &&
+	    (res != LIBUSB_ERROR_NOT_SUPPORTED) &&
+	    (res != LIBUSB_ERROR_BUSY)) {
+		DO_USB_ERR(res, "libusb_set_configuration");
+	}
+
+	/*
+	 * Claim the erroneously-numbered "0" interface the JagGD uses for its
+	 * control messages.
+	 */
+	CHECKED_USB(libusb_claim_interface(hGD, 0));
+
+	if (argc > 1) {
+		reset[1] = 0x01;
+	} else {
+		reset[1] = 0x00;
+	}
+
+	/*
+	 * Send a reset command over the interface.
+	 */
+	CHECKED_USB(libusb_control_transfer(hGD,
+				LIBUSB_REQUEST_TYPE_VENDOR |
+				LIBUSB_RECIPIENT_INTERFACE,
+				1, /* Request number */
+				0, /* Value */
+				0, /* Index: Specify interface 0 */
+				reset, /* Data */
+				2, /* Size: 2 bytes */
+				2000 /* 2 second timeout */));
+
+	/* Shut down the device */
+	libusb_release_interface(hGD, 0);
+	libusb_close(hGD); hGD = NULL;
+
+	/* Shut down libusb */
+	libusb_exit(usbctx); usbctx = NULL;
 
 	return 0;
 }
