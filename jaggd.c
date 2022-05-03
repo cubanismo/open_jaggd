@@ -8,6 +8,7 @@
 #include <libusb-1.0/libusb.h>
 
 #include "usberr.h"
+#include "fileio.h"
 
 libusb_device_handle *is_jaggd_dev(libusb_device *dev)
 {
@@ -62,18 +63,13 @@ int main(int argc, char *argv[])
 	libusb_context *usbctx = NULL;
 	libusb_device **devs;
 	libusb_device_handle *hGD = NULL;
-	FILE *hFile = NULL;
+	JagFile *jf = NULL;
 	const char *upFileName = "JAGLION.COF"; /* XXX hard-coded file name */
-	uint8_t *uploadBuf = NULL;
-	long fileSize = 0;
-	long fileOff = 0xa8; /* XXX Hard-coded COFF header size */
 	ssize_t i, nDevs;
-	const uint32_t start = 0x4000;
-	const uint32_t dstAddr = 0x4000;
 	int bytesUploaded = 0;
 	int transferSize;
 	int res;
-	int exitCode = 0;
+	int exitCode = -1;
 	bool doReset = false;
 
 	uint8_t reset[] = { 0x02, 0x00 };
@@ -161,6 +157,8 @@ int main(int argc, char *argv[])
 	}
 
 	if (doReset) {
+		printf("Reboot%s\n",
+		       (reset[1] == 0x01) ? " (Debug Console)" : "");
 		/*
 		 * Send a reset command over the control interface.
 		 */
@@ -178,95 +176,57 @@ int main(int argc, char *argv[])
 		goto cleanup;
 	}
 
-	hFile = fopen(upFileName, "rb");
+	jf = LoadFile(upFileName);
 
-	if (!hFile) {
-		fprintf(stderr, "Failed to open '%s':\n  %s\n",
-			upFileName, strerror(errno));
-		exitCode = -1;
+	if (!jf) {
+		/* LoadFile prints its own error messages */
 		goto cleanup;
 	}
 
-	if (fseek(hFile, 0, SEEK_END)) {
-		fprintf(stderr, "Failed to find end of '%s':\n  %s\n",
-			upFileName, strerror(errno));
-		exitCode = -1;
-		goto cleanup;
-	}
+	if (jf) {
+		const uint32_t upSize = jf->dataSize;
+		const uint32_t baseAddr = jf->baseAddr;
+		const uint32_t execAddr = jf->execAddr;
 
-	fileSize = ftell(hFile);
-
-	if (fileSize < 0) {
-		fprintf(stderr, "Failed to query size of '%s':\n  %s\n",
-			upFileName, strerror(errno));
-		exitCode = -1;
-		goto cleanup;
-	}
-
-	fileSize -= fileOff;
-
-	if (fseek(hFile, fileOff, SEEK_SET)) {
-		fprintf(stderr, "Failed to seek past header in '%s':\n  %s\n",
-			upFileName, strerror(errno));
-		exitCode = -1;
-		goto cleanup;
-	}
-
-	uploadBuf = malloc(fileSize);
-
-	if (!uploadBuf) {
-		fprintf(stderr, "Failed to alloc %ld bytes for upload buffer\n",
-			fileSize);
-		exitCode = -1;
-		goto cleanup;
-	}
-
-	if (fread(uploadBuf, 1, fileSize, hFile) != fileSize) {
-		fprintf(stderr, "Failed to read %ld bytes from %s:\n  %s\n",
-			fileSize, upFileName, strerror(errno));
-		exitCode = -1;
-		goto cleanup;
-	}
-
-	if (uploadBuf) {
-		uploadExec[UPEX_OFF_SIZE_LE+0] = (fileSize      ) & 0xff;
-		uploadExec[UPEX_OFF_SIZE_LE+1] = (fileSize >>  8) & 0xff;
-		uploadExec[UPEX_OFF_SIZE_LE+2] = (fileSize >> 16) & 0xff;
-		uploadExec[UPEX_OFF_SIZE_LE+3] = (fileSize >> 24) & 0xff;
+		uploadExec[UPEX_OFF_SIZE_LE+0] = (upSize      ) & 0xff;
+		uploadExec[UPEX_OFF_SIZE_LE+1] = (upSize >>  8) & 0xff;
+		uploadExec[UPEX_OFF_SIZE_LE+2] = (upSize >> 16) & 0xff;
+		uploadExec[UPEX_OFF_SIZE_LE+3] = (upSize >> 24) & 0xff;
 
 		uploadExec[UPEX_OFF_MAGIC0+0] = 0x0e;
 		uploadExec[UPEX_OFF_MAGIC0+1] = 0x04;
 
-		uploadExec[UPEX_OFF_DST_OR_START+0] = (dstAddr >> 24) & 0xff;
-		uploadExec[UPEX_OFF_DST_OR_START+1] = (dstAddr >> 16) & 0xff;
-		uploadExec[UPEX_OFF_DST_OR_START+2] = (dstAddr >>  8) & 0xff;
-		uploadExec[UPEX_OFF_DST_OR_START+3] = (dstAddr      ) & 0xff;
+		uploadExec[UPEX_OFF_DST_OR_START+0] = (baseAddr >> 24) & 0xff;
+		uploadExec[UPEX_OFF_DST_OR_START+1] = (baseAddr >> 16) & 0xff;
+		uploadExec[UPEX_OFF_DST_OR_START+2] = (baseAddr >>  8) & 0xff;
+		uploadExec[UPEX_OFF_DST_OR_START+3] = (baseAddr      ) & 0xff;
 
-		uploadExec[UPEX_OFF_SIZE_BE_MAGIC1+0] = (fileSize >> 24) & 0xff;
-		uploadExec[UPEX_OFF_SIZE_BE_MAGIC1+1] = (fileSize >> 16) & 0xff;
-		uploadExec[UPEX_OFF_SIZE_BE_MAGIC1+2] = (fileSize >>  8) & 0xff;
-		uploadExec[UPEX_OFF_SIZE_BE_MAGIC1+3] = (fileSize      ) & 0xff;
+		uploadExec[UPEX_OFF_SIZE_BE_MAGIC1+0] = (upSize >> 24) & 0xff;
+		uploadExec[UPEX_OFF_SIZE_BE_MAGIC1+1] = (upSize >> 16) & 0xff;
+		uploadExec[UPEX_OFF_SIZE_BE_MAGIC1+2] = (upSize >>  8) & 0xff;
+		uploadExec[UPEX_OFF_SIZE_BE_MAGIC1+3] = (upSize      ) & 0xff;
 
-		uploadExec[UPEX_OFF_START_MAGIC2+0] = (start >> 24) & 0xff;
-		uploadExec[UPEX_OFF_START_MAGIC2+1] = (start >> 16) & 0xff;
-		uploadExec[UPEX_OFF_START_MAGIC2+2] = (start >>  8) & 0xff;
-		uploadExec[UPEX_OFF_START_MAGIC2+3] = (start      ) & 0xff;
-	};
+		uploadExec[UPEX_OFF_START_MAGIC2+0] = (execAddr >> 24) & 0xff;
+		uploadExec[UPEX_OFF_START_MAGIC2+1] = (execAddr >> 16) & 0xff;
+		uploadExec[UPEX_OFF_START_MAGIC2+2] = (execAddr >>  8) & 0xff;
+		uploadExec[UPEX_OFF_START_MAGIC2+3] = (execAddr      ) & 0xff;
 
-	if (uploadBuf) {
-		printf("Uploading %ld bytes from offset $%lx in '%s' to $%"
-		       PRIx32, fileSize, fileOff, upFileName, dstAddr);
+		printf("UPLOADING %s %zd BYTES TO $%" PRIx32, upFileName,
+		       jf->dataSize, jf->baseAddr);
+		if (jf->offset) {
+			printf(" OFFSET $%zx", jf->offset);
+		}
+
+		if (execAddr != baseAddr) {
+			printf(" ENTRY $%" PRIx32, jf->execAddr);
+		}
+
+		if (execAddr) {
+			printf(" EXECUTE");
+		}
+
+		printf("\n");
 	}
-
-	if (uploadBuf && start) {
-		printf(", ");
-	}
-
-	if (start) {
-		printf("Executing at $%" PRIx32, start);
-	}
-
-	printf("\n");
 
 	/*
 	 * Send an upload command over the control interface.
@@ -284,28 +244,28 @@ int main(int argc, char *argv[])
 	/*
 	 * Send the data to the bulk endpoint
 	 */
-	while (bytesUploaded < fileSize) {
+	while (bytesUploaded < jf->dataSize) {
 		CHECKED_USB(libusb_bulk_transfer(hGD,
 					LIBUSB_ENDPOINT_OUT |
 					/* XXX 2 == Bulk out endpoint number */
 					(LIBUSB_ENDPOINT_ADDRESS_MASK & 2),
-					uploadBuf + bytesUploaded,
-					fileSize - bytesUploaded,
+					jf->buf + jf->offset + bytesUploaded,
+					jf->dataSize - bytesUploaded,
 					&transferSize,
 					1000 * 60 * 5 /* 5 minute timeout */));
 		bytesUploaded += transferSize;
 	}
 
-cleanup:
-	/* Free the data buffer */
-	if (uploadBuf) {
-		free(uploadBuf); uploadBuf = NULL;
+	if (jf) {
+		printf("OK!\n");
 	}
 
-	/* Close the file */
-	if (hFile) {
-		fclose(hFile); hFile = NULL;
-	}
+	/* Success */
+	exitCode = 0;
+
+cleanup:
+	/* Free file data */
+	FreeFile(jf);
 
 	/* Shut down the device */
 	libusb_release_interface(hGD, 0);

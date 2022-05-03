@@ -1,7 +1,7 @@
 CFLAGS = -O2 -Wall -Werror
 LDLIBS =
 
-OBJECTS = jaggd.o
+OBJECTS = jaggd.o fileio.o
 DEPS = $(patsubst %.o,.%.dep,$(OBJECTS))
 PROGS = jaggd
 
@@ -16,4 +16,4 @@ jaggd: LDLIBS += -lusb-1.0
 clean:
 	rm -f $(OBJECTS) $(PROGS)
 
--include $(DEPS)
+include $(DEPS)
