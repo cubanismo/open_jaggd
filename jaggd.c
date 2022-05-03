@@ -1,3 +1,9 @@
+/*
+ * SPDX-License-Identifier: CC0-1.0
+ *
+ * Author: James Jones
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -168,6 +174,9 @@ int main(int argc, char *argv[])
 		 * Exec addr, BE, or 0x00008419 for exec-only */
 		0x00, 0x00, 0x84, 0x19
 	};
+
+	printf("JagGD Version %d.%d.%d\n\n",
+	       JAGGD_MAJOR, JAGGD_MINOR, JAGGD_MICRO);
 
 	if (!ParseOptions(argc, argv, &oReset, &oDebug, &oBoot,
 			  &oFileName, &oBase, &oSize, &oOffset, &oExec)) {

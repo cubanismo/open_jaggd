@@ -1,3 +1,9 @@
+/*
+ * SPDX-License-Identifier: CC0-1.0
+ *
+ * Author: James Jones
+ */
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -7,7 +13,9 @@
 
 static void usage(void)
 {
-	printf("\nUsage: jaggd [commands]\n\n");
+	printf("Reverse-Engineered Jaguar GameDrive Utility.\n\n");
+
+	printf("Usage: jaggd [commands]\n\n");
 
 	printf("-r         Reboot\n");
 	printf("-rd        Reboot to debug stub\n\n");
@@ -19,7 +27,7 @@ static void usage(void)
 	printf("-x addr    Execute from address\n\n");
 
 	printf("Prefix numbers with '$' or '0x' for hex, otherwise decimal is "
-	       "assumed.\n\n");
+	       "assumed.\n");
 }
 
 static bool ParseNumber(const char *str, uint32_t *num)

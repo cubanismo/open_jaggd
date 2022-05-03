@@ -1,3 +1,9 @@
+/*
+ * SPDX-License-Identifier: CC0-1.0
+ *
+ * Author: James Jones
+ */
+
 #ifndef OPTS_H_
 #define OPTS_H_
 

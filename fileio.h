@@ -1,3 +1,9 @@
+/*
+ * SPDX-License-Identifier: CC0-1.0
+ *
+ * Author: James Jones
+ */
+
 #ifndef FILEIO_H_
 #define FILEIO_H_
 
