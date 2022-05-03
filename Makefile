@@ -1,7 +1,7 @@
 CFLAGS = -O2 -Wall -Werror
 LDLIBS =
 
-OBJECTS = jaggd.o fileio.o
+OBJECTS = jaggd.o fileio.o opts.o
 DEPS = $(patsubst %.o,.%.dep,$(OBJECTS))
 PROGS = jaggd
 

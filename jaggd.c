@@ -9,6 +9,7 @@
 
 #include "usberr.h"
 #include "fileio.h"
+#include "opts.h"
 
 libusb_device_handle *is_jaggd_dev(libusb_device *dev)
 {
@@ -58,19 +59,42 @@ libusb_device_handle *is_jaggd_dev(libusb_device *dev)
 	return NULL;
 }
 
+static bool CheckMemRange(const char *addrType, uint32_t addr)
+{
+	static const uint32_t JAG_MIN_MEMORY = 0x2000U;
+	static const uint32_t JAG_MAX_MEMORY = 0xE00000;
+
+	if ((addr >= JAG_MIN_MEMORY) && (addr < JAG_MAX_MEMORY)) {
+		return true;
+	}
+
+	fprintf(stderr, "%s address $%" PRIx32 " is out of range.\n",
+		addrType, addr);
+	fprintf(stderr, "Valid memory range: [$%" PRIx32 ", $%" PRIx32 ")\n",
+		JAG_MIN_MEMORY, JAG_MAX_MEMORY);
+
+	return false;
+}
+
 int main(int argc, char *argv[])
 {
 	libusb_context *usbctx = NULL;
 	libusb_device **devs;
 	libusb_device_handle *hGD = NULL;
 	JagFile *jf = NULL;
-	const char *upFileName = "JAGLION.COF"; /* XXX hard-coded file name */
+	char *oFileName = NULL;
 	ssize_t i, nDevs;
+	uint32_t oBase = 0x0;
+	uint32_t oSize = 0x0;
+	uint32_t oOffset = 0xffffffffu;
+	uint32_t oExec = 0x0;
 	int bytesUploaded = 0;
 	int transferSize;
 	int res;
 	int exitCode = -1;
-	bool doReset = false;
+	bool oReset = false;
+	bool oDebug = false;
+	bool oBoot = false;
 
 	uint8_t reset[] = { 0x02, 0x00 };
 	uint8_t uploadExec[] = { 0x14, 0x02,
@@ -101,6 +125,12 @@ int main(int argc, char *argv[])
 		0x00, 0x00, 0x84, 0x19
 	};
 
+	if (!ParseOptions(argc, argv, &oReset, &oDebug, &oBoot,
+			  &oFileName, &oBase, &oSize, &oOffset, &oExec)) {
+		/* ParseOptions() prints usage on failure */
+		return -1;
+	}
+
 	CHECKED_USB(libusb_init(&usbctx));
 
 	CHECKED_USB_RES(nDevs, libusb_get_device_list(usbctx, &devs));
@@ -120,6 +150,7 @@ int main(int argc, char *argv[])
 	libusb_free_device_list(devs, 1 /* Do unref devices */);
 
 	if (!hGD) {
+		fprintf(stderr, "Jaguar GameDrive not found\n");
 		return -1;
 	}
 
@@ -150,15 +181,18 @@ int main(int argc, char *argv[])
 	 */
 	CHECKED_USB(libusb_claim_interface(hGD, 0));
 
-	if (argc > 1) {
-		reset[1] = 0x01;
-	} else {
-		reset[1] = 0x00;
-	}
+	if (oReset) {
+		printf("Reboot");
+		if (oDebug) {
+			/* Boot into the debug stub */
+			reset[1] = 0x01;
+			printf(" (Debug Console)\n");
+		} else {
+			/* Boot into the JagGD menu */
+			reset[1] = 0x00;
+			printf("\n");
+		}
 
-	if (doReset) {
-		printf("Reboot%s\n",
-		       (reset[1] == 0x01) ? " (Debug Console)" : "");
 		/*
 		 * Send a reset command over the control interface.
 		 */
@@ -176,17 +210,57 @@ int main(int argc, char *argv[])
 		goto cleanup;
 	}
 
-	jf = LoadFile(upFileName);
+	if (oFileName) {
+		jf = LoadFile(oFileName);
 
-	if (!jf) {
-		/* LoadFile prints its own error messages */
+		if (!jf) {
+			/* LoadFile prints its own error messages */
+			goto cleanup;
+		}
+
+		if (oExec == 0x0) {
+			oExec = jf->execAddr;
+		}
+
+		if (oBase != 0x0) {
+			jf->baseAddr = oBase;
+		}
+
+		if (!CheckMemRange("Base upload", oExec)) {
+			goto cleanup;
+		}
+
+		if (oOffset != 0xffffffffu) {
+			if (oOffset > jf->length) {
+				fprintf(stderr, "Offset %" PRIu32
+						"exceeds file length %zd\n",
+					oOffset, jf->length);
+				goto cleanup;
+			}
+
+			jf->offset = oOffset;
+		}
+
+		if (oSize != 0x0) {
+			if ((oSize + jf->offset) > jf->length) {
+				fprintf(stderr, "Size %" PRIu32 " + offset %zd "
+						"exceeds file length "
+						"%zd\n",
+					oSize, jf->offset, jf->length);
+				goto cleanup;
+			}
+			jf->dataSize = oSize;
+		}
+	}
+
+	if (oBoot && !CheckMemRange("Execution address", oExec)) {
 		goto cleanup;
 	}
 
 	if (jf) {
 		const uint32_t upSize = jf->dataSize;
 		const uint32_t baseAddr = jf->baseAddr;
-		const uint32_t execAddr = jf->execAddr;
+		const uint32_t execAddr = oBoot ? oExec : 0x0;
 
 		uploadExec[UPEX_OFF_SIZE_LE+0] = (upSize      ) & 0xff;
 		uploadExec[UPEX_OFF_SIZE_LE+1] = (upSize >>  8) & 0xff;
@@ -211,14 +285,14 @@ int main(int argc, char *argv[])
 		uploadExec[UPEX_OFF_START_MAGIC2+2] = (execAddr >>  8) & 0xff;
 		uploadExec[UPEX_OFF_START_MAGIC2+3] = (execAddr      ) & 0xff;
 
-		printf("UPLOADING %s %zd BYTES TO $%" PRIx32, upFileName,
+		printf("UPLOADING %s %zd BYTES TO $%" PRIx32, oFileName,
 		       jf->dataSize, jf->baseAddr);
 		if (jf->offset) {
 			printf(" OFFSET $%zx", jf->offset);
 		}
 
-		if (execAddr != baseAddr) {
-			printf(" ENTRY $%" PRIx32, jf->execAddr);
+		if (oExec != baseAddr) {
+			printf(" ENTRY $%" PRIx32, oExec);
 		}
 
 		if (execAddr) {
@@ -226,6 +300,14 @@ int main(int argc, char *argv[])
 		}
 
 		printf("\n");
+	} else if (oBoot) {
+		uploadExec[UPEX_OFF_DST_OR_START+0] = (oExec >> 24) & 0xff;
+		uploadExec[UPEX_OFF_DST_OR_START+1] = (oExec >> 16) & 0xff;
+		uploadExec[UPEX_OFF_DST_OR_START+2] = (oExec >>  8) & 0xff;
+		uploadExec[UPEX_OFF_DST_OR_START+3] = (oExec      ) & 0xff;
+
+		printf("EXECUTING $%" PRIx32 "...", oExec);
+		fflush(stdout);
 	}
 
 	/*
@@ -244,7 +326,7 @@ int main(int argc, char *argv[])
 	/*
 	 * Send the data to the bulk endpoint
 	 */
-	while (bytesUploaded < jf->dataSize) {
+	while (jf && (bytesUploaded < jf->dataSize)) {
 		CHECKED_USB(libusb_bulk_transfer(hGD,
 					LIBUSB_ENDPOINT_OUT |
 					/* XXX 2 == Bulk out endpoint number */
@@ -252,11 +334,11 @@ int main(int argc, char *argv[])
 					jf->buf + jf->offset + bytesUploaded,
 					jf->dataSize - bytesUploaded,
 					&transferSize,
-					1000 * 60 * 5 /* 5 minute timeout */));
+					1000 * 60 * 2 /* 2 minute timeout */));
 		bytesUploaded += transferSize;
 	}
 
-	if (jf) {
+	if (jf || oBoot) {
 		printf("OK!\n");
 	}
 
@@ -273,6 +355,8 @@ cleanup:
 
 	/* Shut down libusb */
 	libusb_exit(usbctx); usbctx = NULL;
+
+	free(oFileName); oFileName = NULL;
 
 	return exitCode;
 }
