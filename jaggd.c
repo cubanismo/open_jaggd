@@ -142,9 +142,9 @@ int main(int argc, char *argv[])
 	int bytesUploaded = 0;
 	int transferSize;
 	int exitCode = -1;
-	bool oReset = false;
+	int oReset = false;
 	bool oDebug = false;
-	bool oBoot = false;
+	int oBoot = false;
 
 	uint8_t reset[] = { 0x02, 0x00 };
 	uint8_t uploadExec[] = { 0x14, 0x02,
@@ -193,16 +193,16 @@ int main(int argc, char *argv[])
 		goto cleanup;
 	}
 
-	if (oReset) {
+	if (oReset > ECmd_ResetNone) {
 		printf("Reboot");
-		if (oDebug) {
-			/* Boot into the debug stub */
-			reset[1] = 0x01;
-			printf(" (Debug Console)\n");
-		} else {
-			/* Boot into the JagGD menu */
-			reset[1] = 0x00;
-			printf("\n");
+                reset[1] = oReset;
+		if (oReset == ECmd_ResetDebug) {
+                  /* Boot into the debug stub */
+                  printf(" (Debug Console)\n");
+		} else if ( oReset == ECmd_ResetRom ){
+                  printf(" (ROM)\n");
+                } else {
+                  printf("\n");
 		}
 
 		/*
@@ -235,7 +235,7 @@ int main(int argc, char *argv[])
 			jf->baseAddr = oBase;
 		}
 
-		if (!CheckMemRange("Base upload", oExec)) {
+		if (oExec != 0xffffffff && !CheckMemRange("Base upload", oExec)) {
 			goto cleanup;
 		}
 
@@ -262,7 +262,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (oBoot && !CheckMemRange("Execution address", oExec)) {
+	if (oBoot && oExec != 0xffffffff && !CheckMemRange("Execution address", oExec)) {
 		goto cleanup;
 	}
 
@@ -289,7 +289,7 @@ int main(int argc, char *argv[])
 		uploadExec[UPEX_OFF_SIZE_BE_MAGIC1+2] = (upSize >>  8) & 0xff;
 		uploadExec[UPEX_OFF_SIZE_BE_MAGIC1+3] = (upSize      ) & 0xff;
 
-		uploadExec[UPEX_OFF_START_MAGIC2+0] = (execAddr >> 24) & 0xff;
+                uploadExec[UPEX_OFF_START_MAGIC2+0] = (execAddr >> 24) & 0xff;
 		uploadExec[UPEX_OFF_START_MAGIC2+1] = (execAddr >> 16) & 0xff;
 		uploadExec[UPEX_OFF_START_MAGIC2+2] = (execAddr >>  8) & 0xff;
 		uploadExec[UPEX_OFF_START_MAGIC2+3] = (execAddr      ) & 0xff;
@@ -301,13 +301,16 @@ int main(int argc, char *argv[])
 		}
 
 		if (oExec != baseAddr) {
-			printf(" ENTRY $%" PRIx32, oExec);
+                  if ( oExec == 0xffffffff ){
+                    printf(" REBOOT");
+                  } else {
+                    printf(" ENTRY $%" PRIx32, oExec);
+                  }
 		}
 
 		if (execAddr) {
 			printf(" EXECUTE");
 		}
-
 		printf("\n");
 	} else if (oBoot) {
 		uploadExec[UPEX_OFF_DST_OR_START+0] = (oExec >> 24) & 0xff;
@@ -335,6 +338,7 @@ int main(int argc, char *argv[])
 	/*
 	 * Send the data to the bulk endpoint
 	 */
+        if ( jf ) printf("Uploading ...");
 	while (jf && (bytesUploaded < jf->dataSize)) {
 		CHECKED_USB(libusb_bulk_transfer(hGD,
 					LIBUSB_ENDPOINT_OUT |
@@ -345,12 +349,13 @@ int main(int argc, char *argv[])
 					&transferSize,
 					1000 * 60 * 2 /* 2 minute timeout */));
 		bytesUploaded += transferSize;
+                printf(".");
+                fflush(stdout);
 	}
-
+        printf("\n");
 	if (jf || oBoot) {
 		printf("OK!\n");
 	}
-
 	/* Success */
 	exitCode = 0;
 

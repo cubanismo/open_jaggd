@@ -10,10 +10,27 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+enum EJagGDCommand
+{
+  ECmd_ResetNone = -1,
+  ECmd_Reset = 0,
+  ECmd_ResetDebug,
+  ECmd_Server,
+  ECmd_WriteFile = 5,
+  ECmd_ResetRom
+};
+
+enum EServerCommand
+{
+  ECmd_Upload = 4,
+  ECmd_Execute,
+  ECmd_EnableEEPROM
+};
+
 extern bool ParseOptions(int argc, char *argv[],
-			 bool *oReset,
+			 int *oReset,
 			 bool *oDebug,
-			 bool *oBoot,
+			 int *oBoot,
 			 char **oFileName,
 			 uint32_t *oBase,
 			 uint32_t *oSize,

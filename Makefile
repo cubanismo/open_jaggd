@@ -13,7 +13,8 @@ JAGGD_MICRO = 1
 
 CDEFS ?=
 CPPFLAGS ?=
-CFLAGS ?= -O2 -Wall -Werror
+CFLAGS ?= -O2 -Wall
+#-Werror
 LDLIBS ?=
 
 CDEFS += -DJAGGD_MAJOR=$(JAGGD_MAJOR) \
