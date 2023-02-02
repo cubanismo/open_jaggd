@@ -19,5 +19,7 @@ extern bool ParseOptions(int argc, char *argv[],
 			 uint32_t *oBase,
 			 uint32_t *oSize,
 			 uint32_t *oOffset,
-			 uint32_t *oExec);
+			 uint32_t *oExec,
+			 char **oEepromName,
+			 uint8_t *oEepromType);
 #endif /* OPTS_H_ */

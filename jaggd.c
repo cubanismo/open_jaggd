@@ -135,6 +135,7 @@ int main(int argc, char *argv[])
 	libusb_device_handle *hGD = NULL;
 	JagFile *jf = NULL;
 	char *oFileName = NULL;
+	char *oEepromName = NULL;
 	uint32_t oBase = 0x0;
 	uint32_t oSize = 0x0;
 	uint32_t oOffset = 0xffffffffu;
@@ -146,8 +147,27 @@ int main(int argc, char *argv[])
 	bool oDebug = false;
 	bool oBoot = false;
 	bool oBootRom = false;
+	uint8_t oEepromType = 0;
 
 	uint8_t reset[] = { 0x02, 0x00 };
+	uint8_t eeprom[0x39] = {
+		/* Total cmd size = 0x39, cmd = 0x02 */
+		0x39, 0x02,
+
+		/* Upload size, always zero */
+		0x00, 0x00, 0x00, 0x00,
+
+#define EEP_OFF_SIZE_AND_CMD 0x06
+		/* server cmd size = 0x33, server cmd = 0x06 */
+		0x33, 0x06,
+
+#define EEP_OFF_EEPROM_TYPE 0x08
+		/* 0 = 128b, 1 = 256b or 512b, 2 = 1024b or 2048b */
+		0x00,
+
+#define EEP_OFF_EEPROM_FNAME 0x09
+		/* Filename on SD card, max 48 bytes, includes \0 terminator */
+	};
 	uint8_t uploadExec[] = { 0x14, 0x02,
 
 #define UPEX_OFF_SIZE_LE 0x02
@@ -180,7 +200,8 @@ int main(int argc, char *argv[])
 	       JAGGD_MAJOR, JAGGD_MINOR, JAGGD_MICRO);
 
 	if (!ParseOptions(argc, argv, &oReset, &oDebug, &oBoot, &oBootRom,
-			  &oFileName, &oBase, &oSize, &oOffset, &oExec)) {
+			  &oFileName, &oBase, &oSize, &oOffset, &oExec,
+			  &oEepromName, &oEepromType)) {
 		/* ParseOptions() prints usage on failure */
 		return -1;
 	}
@@ -222,6 +243,32 @@ int main(int argc, char *argv[])
 					reset, /* Data */
 					sizeof(reset), /* Size */
 					2000 /* 2 second timeout */));
+	}
+
+	if (oEepromName) {
+		eeprom[EEP_OFF_EEPROM_TYPE] = oEepromType;
+		strncpy((char *)&eeprom[EEP_OFF_EEPROM_FNAME], oEepromName,
+			(sizeof(eeprom) - EEP_OFF_EEPROM_FNAME) - 1);
+
+		printf("Setting EEPROM file: '%s', %s bytes...", oEepromName,
+		       (oEepromType == 0) ? "128" : (oEepromType == 1) ? "256/512" :
+		       "1024/2048");
+		fflush(stdout);
+
+		/*
+		 * Send enable EEPROM command over the control interface.
+		 */
+		CHECKED_USB(libusb_control_transfer(hGD,
+					LIBUSB_REQUEST_TYPE_VENDOR |
+					LIBUSB_RECIPIENT_INTERFACE,
+					1, /* Request number */
+					0, /* Value */
+					0, /* Index: Specify interface 0 */
+					eeprom, /* Data */
+					sizeof(eeprom), /* Size */
+					2000 /* 2 second timeout */));
+
+		printf("OK\n");
 	}
 
 	if (oFileName) {
@@ -333,24 +380,25 @@ int main(int argc, char *argv[])
 		fflush(stdout);
 	}
 
-	/*
-	 * Send an upload command over the control interface.
-	 */
-	CHECKED_USB(libusb_control_transfer(hGD,
-				LIBUSB_REQUEST_TYPE_VENDOR |
-				LIBUSB_RECIPIENT_INTERFACE,
-				1, /* Request number */
-				0, /* Value */
-				0, /* Index: Specify interface 0 */
-				uploadExec, /* Data */
-				sizeof(uploadExec), /* Size */
-				2000 /* 2 second timeout */));
+	if (jf || oBoot) {
+		/*
+		 * Send an upload command over the control interface.
+		 */
+		CHECKED_USB(libusb_control_transfer(hGD,
+					LIBUSB_REQUEST_TYPE_VENDOR |
+					LIBUSB_RECIPIENT_INTERFACE,
+					1, /* Request number */
+					0, /* Value */
+					0, /* Index: Specify interface 0 */
+					uploadExec, /* Data */
+					sizeof(uploadExec), /* Size */
+					2000 /* 2 second timeout */));
 
-	/*
-	 * Send the data to the bulk endpoint
-	 */
-	while (jf && (bytesUploaded < jf->dataSize)) {
-		CHECKED_USB(libusb_bulk_transfer(hGD,
+		/*
+		 * Send the data to the bulk endpoint
+		 */
+		while (jf && (bytesUploaded < jf->dataSize)) {
+			CHECKED_USB(libusb_bulk_transfer(hGD,
 					LIBUSB_ENDPOINT_OUT |
 					/* XXX 2 == Bulk out endpoint number */
 					(LIBUSB_ENDPOINT_ADDRESS_MASK & 2),
@@ -358,10 +406,9 @@ int main(int argc, char *argv[])
 					jf->dataSize - bytesUploaded,
 					&transferSize,
 					1000 * 60 * 2 /* 2 minute timeout */));
-		bytesUploaded += transferSize;
-	}
+			bytesUploaded += transferSize;
+		}
 
-	if (jf || oBoot) {
 		printf("OK!\n");
 	}
 
@@ -378,6 +425,7 @@ cleanup:
 	/* Shut down libusb */
 	libusb_exit(usbctx); usbctx = NULL;
 
+	free(oEepromName); oEepromName = NULL;
 	free(oFileName); oFileName = NULL;
 
 	return exitCode;

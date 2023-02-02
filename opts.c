@@ -25,7 +25,10 @@ static void usage(void)
 	printf("-u[x[r]] file[,a:addr,s:size,o:offset,x:entry]\n");
 	printf("           Upload to address with size and file offset and "
 	       "optionally execute\n");
-	printf("           directly or via reboot.\n");
+	printf("           directly or via reboot\n");
+	printf("-e file[,size]\n");
+	printf("           Enable EEPROM file on memory card with given size "
+	       "in bytes (default 128)\n");
 	printf("-x addr    Execute from address\n");
 	printf("-xr        Execute via reboot\n\n");
 
@@ -117,9 +120,12 @@ bool ParseOptions(int argc, char *argv[],
 		  uint32_t *oBase,
 		  uint32_t *oSize,
 		  uint32_t *oOffset,
-		  uint32_t *oExec)
+		  uint32_t *oExec,
+		  char **oEepromName,
+		  uint8_t *oEepromType)
 {
 	char *outName = NULL;
+	char *outEeprom = NULL;
 	int i;
 	bool success = true;
 
@@ -201,6 +207,75 @@ bool ParseOptions(int argc, char *argv[],
 		} else if (!strcmp(argv[i], "-xr")) {
 			*oBoot = true;
 			*oBootRom = true;
+		} else if (!strcmp(argv[i], "-e")) {
+			char *tok;
+			size_t nameLen;
+
+			if (++i >= argc) {
+				usage();
+				success = false;
+				break;
+			}
+
+			tok = strtok(argv[i], ",");
+
+			if (!tok) {
+				usage();
+				success = false;
+				break;
+			}
+
+			nameLen = strlen(tok) + 1;
+
+			if (nameLen == 0) {
+				usage();
+				success = false;
+				break;
+			}
+
+			outEeprom = malloc(nameLen);
+
+			if (!outEeprom) {
+				fprintf(stderr, "Failed to allocate %zu bytes for EEPROM name\n",
+					nameLen);
+				success = false;
+				break;
+			}
+
+			strcpy(outEeprom, tok);
+
+			tok = strtok(NULL, ",");
+
+			if (tok) {
+				uint32_t eepromSize;
+				if (!ParseNumber(tok, &eepromSize)) {
+					usage();
+					success = false;
+					break;
+				}
+				switch (eepromSize) {
+				case 128:
+					*oEepromType = 0;
+					break;
+				case 256:
+				case 512:
+					*oEepromType = 1;
+					break;
+				case 1024:
+				case 2048:
+					*oEepromType = 2;
+					break;
+				default:
+					success = false;
+					break;
+
+				}
+
+				if (!success) {
+					usage();
+					break;
+				}
+			}
 		} else {
 			usage();
 			success = false;
@@ -209,16 +284,18 @@ bool ParseOptions(int argc, char *argv[],
 	}
 
 	/* The user didn't ask us to do anything. Complain. */
-	if (!*oReset && !outName && !*oBoot) {
+	if (!*oReset && !outName && !*oBoot && !outEeprom) {
 		usage();
 		success = false;
 	}
 
 	if (!success) {
 		free(outName); outName = NULL;
+		free(outEeprom); outEeprom = NULL;
 		return false;
 	}
 
 	*oFileName = outName;
+	*oEepromName = outEeprom;
 	return true;
 }
