@@ -242,7 +242,7 @@ int main(int argc, char *argv[])
 		if (oOffset != 0xffffffffu) {
 			if (oOffset > jf->length) {
 				fprintf(stderr, "Offset %" PRIu32
-						"exceeds file length %zd\n",
+						"exceeds file length %zu\n",
 					oOffset, jf->length);
 				goto cleanup;
 			}
@@ -252,10 +252,11 @@ int main(int argc, char *argv[])
 
 		if (oSize != 0x0) {
 			if ((oSize + jf->offset) > jf->length) {
-				fprintf(stderr, "Size %" PRIu32 " + offset %zd "
-						"exceeds file length "
-						"%zd\n",
-					oSize, jf->offset, jf->length);
+				fprintf(stderr, "Size %" PRIu32 " + offset %"
+					        PRId64 " exceeds file length "
+						"%zu\n",
+					oSize, (int64_t)jf->offset,
+					jf->length);
 				goto cleanup;
 			}
 			jf->dataSize = oSize;
@@ -297,7 +298,7 @@ int main(int argc, char *argv[])
 		printf("UPLOADING %s %zd BYTES TO $%" PRIx32, oFileName,
 		       jf->dataSize, jf->baseAddr);
 		if (jf->offset) {
-			printf(" OFFSET $%zx", jf->offset);
+			printf(" OFFSET $%" PRIx64, (int64_t)jf->offset);
 		}
 
 		if (oExec != baseAddr) {

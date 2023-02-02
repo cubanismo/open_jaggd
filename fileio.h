@@ -7,6 +7,7 @@
 #ifndef FILEIO_H_
 #define FILEIO_H_
 
+#include <sys/types.h> /* off_t */
 #include <stdint.h>
 #include <stdbool.h>
 
