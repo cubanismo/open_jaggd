@@ -18,13 +18,16 @@ static void usage(void)
 	printf("Usage: jaggd [commands]\n\n");
 
 	printf("-r         Reboot\n");
-	printf("-rd        Reboot to debug stub\n\n");
+	printf("-rd        Reboot to debug stub\n");
+	printf("-rr        Reboot and keep current ROM\n\n");
 
 	printf("From stub mode (all ROM, RAM > $2000) --\n");
-	printf("-u[x] file[,a:addr,s:size,o:offset,x:entry]\n");
+	printf("-u[x[r]] file[,a:addr,s:size,o:offset,x:entry]\n");
 	printf("           Upload to address with size and file offset and "
-	       "optionally execute.\n");
-	printf("-x addr    Execute from address\n\n");
+	       "optionally execute\n");
+	printf("           directly or via reboot.\n");
+	printf("-x addr    Execute from address\n");
+	printf("-xr        Execute via reboot\n\n");
 
 	printf("Prefix numbers with '$' or '0x' for hex, otherwise decimal is "
 	       "assumed.\n");
@@ -109,6 +112,7 @@ bool ParseOptions(int argc, char *argv[],
 		  bool *oReset,
 		  bool *oDebug,
 		  bool *oBoot,
+		  bool *oBootRom,
 		  char **oFileName,
 		  uint32_t *oBase,
 		  uint32_t *oSize,
@@ -132,24 +136,43 @@ bool ParseOptions(int argc, char *argv[],
 
 				if (argv[i][2] == 'd') {
 					*oDebug = true;
+				} else if (argv[i][2] == 'r') {
+					*oBootRom = true;
+				} else {
+					usage();
+					success = false;
+					break;
 				}
 			}
 
 			*oReset = true;
 		} else if (!strncmp(argv[i], "-u", 2)) {
-			if (optLen > 2) {
-				if (argv[i][3] != '\0') {
-					usage();
+			switch (optLen) {
+			case 4:
+				if (argv[i][3] == 'r') {
+					*oBootRom = true;
+				} else {
 					success = false;
 					break;
 				}
-
+				// Fall through
+			case 3:
 				if (argv[i][2] == 'x') {
 					*oBoot = true;
+				} else {
+					success = false;
+					break;
 				}
+				// Fall through
+			case 2:
+				break;
+
+			default:
+				success = false;
+				break;
 			}
 
-			if (++i >= argc) {
+			if (!success || (++i >= argc)) {
 				usage();
 				success = false;
 				break;
@@ -175,6 +198,9 @@ bool ParseOptions(int argc, char *argv[],
 			}
 
 			*oBoot = true;
+		} else if (!strcmp(argv[i], "-xr")) {
+			*oBoot = true;
+			*oBootRom = true;
 		} else {
 			usage();
 			success = false;

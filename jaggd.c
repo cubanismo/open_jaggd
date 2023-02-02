@@ -145,6 +145,7 @@ int main(int argc, char *argv[])
 	bool oReset = false;
 	bool oDebug = false;
 	bool oBoot = false;
+	bool oBootRom = false;
 
 	uint8_t reset[] = { 0x02, 0x00 };
 	uint8_t uploadExec[] = { 0x14, 0x02,
@@ -178,7 +179,7 @@ int main(int argc, char *argv[])
 	printf("JagGD Version %d.%d.%d\n\n",
 	       JAGGD_MAJOR, JAGGD_MINOR, JAGGD_MICRO);
 
-	if (!ParseOptions(argc, argv, &oReset, &oDebug, &oBoot,
+	if (!ParseOptions(argc, argv, &oReset, &oDebug, &oBoot, &oBootRom,
 			  &oFileName, &oBase, &oSize, &oOffset, &oExec)) {
 		/* ParseOptions() prints usage on failure */
 		return -1;
@@ -199,6 +200,10 @@ int main(int argc, char *argv[])
 			/* Boot into the debug stub */
 			reset[1] = 0x01;
 			printf(" (Debug Console)\n");
+		} else if (oBootRom) {
+			/* Boot the currently loaded ROM from the Jaguar BIOS */
+			reset[1] = 0x06;
+			printf(" (ROM)\n");
 		} else {
 			/* Boot into the JagGD menu */
 			reset[1] = 0x00;
@@ -235,7 +240,7 @@ int main(int argc, char *argv[])
 			jf->baseAddr = oBase;
 		}
 
-		if (!CheckMemRange("Base upload", oExec)) {
+		if (!CheckMemRange("Base upload", jf->baseAddr)) {
 			goto cleanup;
 		}
 
@@ -263,7 +268,9 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (oBoot && !CheckMemRange("Execution address", oExec)) {
+	if (oBootRom) {
+		oExec = 0xffffffff;
+	} else if (oBoot && !CheckMemRange("Execution address", oExec)) {
 		goto cleanup;
 	}
 
@@ -301,7 +308,9 @@ int main(int argc, char *argv[])
 			printf(" OFFSET $%" PRIx64, (int64_t)jf->offset);
 		}
 
-		if (oExec != baseAddr) {
+		if (oBootRom) {
+			printf(" REBOOT");
+		} else if (oExec != baseAddr) {
 			printf(" ENTRY $%" PRIx32, oExec);
 		}
 
@@ -316,7 +325,11 @@ int main(int argc, char *argv[])
 		uploadExec[UPEX_OFF_DST_OR_START+2] = (oExec >>  8) & 0xff;
 		uploadExec[UPEX_OFF_DST_OR_START+3] = (oExec      ) & 0xff;
 
-		printf("EXECUTING $%" PRIx32 "...", oExec);
+		if (oBootRom) {
+			printf("REBOOTING...");
+		} else {
+			printf("EXECUTING $%" PRIx32 "...", oExec);
+		}
 		fflush(stdout);
 	}
 
