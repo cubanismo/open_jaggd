@@ -9,7 +9,7 @@
 # Adjust these when making new releases
 JAGGD_MAJOR = 1
 JAGGD_MINOR = 0
-JAGGD_MICRO = 0
+JAGGD_MICRO = 1
 
 CDEFS ?=
 CPPFLAGS ?=

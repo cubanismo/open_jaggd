@@ -19,15 +19,21 @@ Usage:
 Run the program without any parameters to see the usage:
 
     Usage: jaggd [commands]
-
+    
     -r         Reboot
     -rd        Reboot to debug stub
-
+    -rr        Reboot and keep current ROM
+    -wf file   Write file to SD card
+    
     From stub mode (all ROM, RAM > $2000) --
-    -u[x] file[,a:addr,s:size,o:offset,x:entry]
-               Upload to address with size and file offset and optionally execute.
+    -u[x[r]] file[,a:addr,s:size,o:offset,x:entry]
+               Upload to address with size and file offset and optionally execute
+               directly or via reboot
+    -e file[,size]
+               Enable EEPROM file on memory card with given size in bytes (default 128)
     -x addr    Execute from address
-
+    -xr        Execute via reboot
+    
     Prefix numbers with '$' or '0x' for hex, otherwise decimal is assumed.
 
 On Linux/Unix, the program generally must be run with root permissions, e.g.
