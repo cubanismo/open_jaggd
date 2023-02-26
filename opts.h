@@ -21,5 +21,6 @@ extern bool ParseOptions(int argc, char *argv[],
 			 uint32_t *oOffset,
 			 uint32_t *oExec,
 			 char **oEepromName,
-			 uint8_t *oEepromType);
+			 uint8_t *oEepromType,
+			 char **oWriteFileName);
 #endif /* OPTS_H_ */

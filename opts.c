@@ -19,7 +19,8 @@ static void usage(void)
 
 	printf("-r         Reboot\n");
 	printf("-rd        Reboot to debug stub\n");
-	printf("-rr        Reboot and keep current ROM\n\n");
+	printf("-rr        Reboot and keep current ROM\n");
+	printf("-wf file   Write file to SD card\n\n");
 
 	printf("From stub mode (all ROM, RAM > $2000) --\n");
 	printf("-u[x[r]] file[,a:addr,s:size,o:offset,x:entry]\n");
@@ -122,10 +123,12 @@ bool ParseOptions(int argc, char *argv[],
 		  uint32_t *oOffset,
 		  uint32_t *oExec,
 		  char **oEepromName,
-		  uint8_t *oEepromType)
+		  uint8_t *oEepromType,
+		  char **oWriteFileName)
 {
 	char *outName = NULL;
 	char *outEeprom = NULL;
+	char *outWriteFileName = NULL;
 	int i;
 	bool success = true;
 
@@ -276,6 +279,27 @@ bool ParseOptions(int argc, char *argv[],
 					break;
 				}
 			}
+		} else if (!strcmp(argv[i], "-wf")) {
+			size_t nameLen;
+
+			if (++i >= argc) {
+				usage();
+				success = false;
+				break;
+			}
+
+			nameLen = strlen(argv[i]);
+
+			outWriteFileName = malloc(nameLen);
+
+			if (!outWriteFileName) {
+				fprintf(stderr, "Failed to allocate %zu bytes for write file name\n",
+					nameLen);
+				success = false;
+				break;
+			}
+
+			strcpy(outWriteFileName, argv[i]);
 		} else {
 			usage();
 			success = false;
@@ -284,7 +308,7 @@ bool ParseOptions(int argc, char *argv[],
 	}
 
 	/* The user didn't ask us to do anything. Complain. */
-	if (!*oReset && !outName && !*oBoot && !outEeprom) {
+	if (!*oReset && !outName && !*oBoot && !outEeprom && !outWriteFileName) {
 		usage();
 		success = false;
 	}
@@ -292,10 +316,12 @@ bool ParseOptions(int argc, char *argv[],
 	if (!success) {
 		free(outName); outName = NULL;
 		free(outEeprom); outEeprom = NULL;
+		free(outWriteFileName); outWriteFileName = NULL;
 		return false;
 	}
 
 	*oFileName = outName;
 	*oEepromName = outEeprom;
+	*oWriteFileName = outWriteFileName;
 	return true;
 }

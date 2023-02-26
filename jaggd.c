@@ -4,12 +4,16 @@
  * Author: James Jones
  */
 
+/* Needed to get usleep() definition with glibc >= 2.19 */
+#define _DEFAULT_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
 #include <stdbool.h>
 #include <inttypes.h>
+#include <unistd.h>
 
 #include <libusb-1.0/libusb.h>
 
@@ -134,13 +138,14 @@ int main(int argc, char *argv[])
 	libusb_context *usbctx = NULL;
 	libusb_device_handle *hGD = NULL;
 	JagFile *jf = NULL;
+	FILE *fp = NULL;
 	char *oFileName = NULL;
 	char *oEepromName = NULL;
+	char *oWriteFileName = NULL;
 	uint32_t oBase = 0x0;
 	uint32_t oSize = 0x0;
 	uint32_t oOffset = 0xffffffffu;
 	uint32_t oExec = 0x0;
-	int bytesUploaded = 0;
 	int transferSize;
 	int exitCode = -1;
 	bool oReset = false;
@@ -148,8 +153,26 @@ int main(int argc, char *argv[])
 	bool oBoot = false;
 	bool oBootRom = false;
 	uint8_t oEepromType = 0;
+	static const uint32_t MAX_TRANSFER_SIZE = 16 * 1024;
 
 	uint8_t reset[] = { 0x02, 0x00 };
+	uint8_t writeFile[0x36] = {
+		/* Total cmd size = 0x36, cmd = 0x05 */
+		0x36, 0x05,
+
+#define WF_OFF_FILE_NAME 0x02
+		/* Destination file name = max 48 bytes, NUL terminated */
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+
+#define WF_OFF_FILE_SIZE 0x32
+		/* File size (Little endian) */
+		0x00, 0x00, 0x00, 0x00
+	};
 	uint8_t eeprom[0x39] = {
 		/* Total cmd size = 0x39, cmd = 0x02 */
 		0x39, 0x02,
@@ -201,7 +224,7 @@ int main(int argc, char *argv[])
 
 	if (!ParseOptions(argc, argv, &oReset, &oDebug, &oBoot, &oBootRom,
 			  &oFileName, &oBase, &oSize, &oOffset, &oExec,
-			  &oEepromName, &oEepromType)) {
+			  &oEepromName, &oEepromType, &oWriteFileName)) {
 		/* ParseOptions() prints usage on failure */
 		return -1;
 	}
@@ -243,6 +266,10 @@ int main(int argc, char *argv[])
 					reset, /* Data */
 					sizeof(reset), /* Size */
 					2000 /* 2 second timeout */));
+
+		/* jaggd does this. Presumably it improves stability? */
+		sleep(1);
+		usleep(500000);
 	}
 
 	if (oEepromName) {
@@ -269,6 +296,77 @@ int main(int argc, char *argv[])
 					2000 /* 2 second timeout */));
 
 		printf("OK\n");
+	}
+
+	if (oWriteFileName) {
+		uint8_t bytes[MAX_TRANSFER_SIZE];
+		const char *dstFileName;
+		uint32_t size;
+		uint32_t bytesUploaded = 0;
+		uint32_t percent;
+		bool first = true;
+
+		fp = PrepFile(oWriteFileName, &dstFileName, &size);
+
+		if (!fp) {
+			/* PrepFile prints its own error messages */
+			goto cleanup;
+		}
+
+		strncpy((char*)&writeFile[WF_OFF_FILE_NAME], dstFileName, 47);
+
+		/*
+		 * Use memcpy rather than a regular write, as the size field is
+		 * not naturally aligned.
+		 */
+		memcpy(&writeFile[WF_OFF_FILE_SIZE], &size, sizeof(size));
+
+		printf("WRITE FILE (%s)...", dstFileName);
+		fflush(stdout);
+
+		CHECKED_USB(libusb_control_transfer(hGD,
+					LIBUSB_REQUEST_TYPE_VENDOR |
+					LIBUSB_RECIPIENT_INTERFACE,
+					1, /* Request number */
+					0, /* Value */
+					0, /* Index: Specify interface 0 */
+					writeFile, /* Data */
+					sizeof(writeFile), /* Size */
+					2000 /* 2 second timeout */));
+
+		while (bytesUploaded < size) {
+			uint32_t bytesToTransfer = size - bytesUploaded;
+			if (bytesToTransfer > MAX_TRANSFER_SIZE)
+				bytesToTransfer = MAX_TRANSFER_SIZE;
+
+			if (fread(&bytes[0], 1, bytesToTransfer, fp) !=
+			    bytesToTransfer) {
+				fprintf(stderr,
+					"Failed to read data from local file\n");
+				goto cleanup;
+			}
+
+			CHECKED_USB(libusb_bulk_transfer(hGD,
+					LIBUSB_ENDPOINT_OUT |
+					/* XXX 2 == Bulk out endpoint number */
+					(LIBUSB_ENDPOINT_ADDRESS_MASK & 2),
+					&bytes[0],
+					bytesToTransfer,
+					&transferSize,
+					1000 * 60 * 2 /* 2 minute timeout */));
+			bytesUploaded += transferSize;
+			percent = ((uint64_t)bytesUploaded * 100u) / size;
+			if (!first) printf("\b\b\b");
+			else first = false;
+			printf("%2" PRIu32 "%%", percent);
+			fflush(stdout);
+		}
+
+		fclose(fp); fp = NULL;
+
+		/* jaggd does this. Presumably it improves stability? */
+		usleep(500000);
+		printf("\nOK!\n");
 	}
 
 	if (oFileName) {
@@ -383,9 +481,9 @@ int main(int argc, char *argv[])
 	}
 
 	if (jf || oBoot) {
+		uint32_t bytesUploaded = 0;
 		uint32_t percent;
 		bool first = true;
-		
 
 		/*
 		 * Send an upload command over the control interface.
@@ -432,6 +530,9 @@ int main(int argc, char *argv[])
 	exitCode = 0;
 
 cleanup:
+	/* Close the write-to-memory-card file */
+	if (fp) fclose(fp);
+
 	/* Free file data */
 	FreeFile(jf);
 
@@ -441,6 +542,7 @@ cleanup:
 	/* Shut down libusb */
 	libusb_exit(usbctx); usbctx = NULL;
 
+	free(oWriteFileName); oWriteFileName = NULL;
 	free(oEepromName); oEepromName = NULL;
 	free(oFileName); oFileName = NULL;
 

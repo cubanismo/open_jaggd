@@ -10,6 +10,7 @@
 #include <sys/types.h> /* off_t */
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 typedef struct {
 	/* Local data */
@@ -25,5 +26,6 @@ typedef struct {
 
 extern JagFile *LoadFile(const char *fileName);
 extern void FreeFile(JagFile *jf);
+extern FILE *PrepFile(const char *filePath, const char **dstFileName, uint32_t *size);
 
 #endif /* FILEIO_H_ */

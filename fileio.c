@@ -278,3 +278,74 @@ void FreeFile(JagFile *jf)
 		free(jf);
 	}
 }
+
+		const char *dstFileName;
+		uint32_t size;
+		uint32_t bytesUploaded = 0;
+
+FILE *PrepFile(const char *filePath, const char **dstFileName, uint32_t *size)
+{
+	long fileSize;
+	const char *fileName;
+	FILE *fp = fopen(filePath, "rb");
+	size_t pathLen = strlen(filePath);
+	size_t i;
+
+#ifdef _WIN32
+#define PATH_SEP '\\'
+#else
+#define PATH_SEP '/'
+#endif
+
+	if (!fp) {
+		fprintf(stderr, "Failed to open '%s' for reading\n", filePath);
+		return NULL;
+	}
+
+	if (fseek(fp, 0, SEEK_END)) {
+		fprintf(stderr, "Failed to seek to end of file\n");
+		fclose(fp);
+		return NULL;
+	}
+
+	fileSize = ftell(fp);
+
+	if (fileSize < 0) {
+		fprintf(stderr, "Failed to query file size\n");
+		fclose(fp);
+		return NULL;
+	}
+
+	if (fseek(fp, 0, SEEK_SET)) {
+		fprintf(stderr, "Failed to reset file pointer to start of file\n");
+		fclose(fp);
+		return NULL;
+	}
+
+	if (fileSize > UINT32_MAX) {
+		fprintf(stderr, "File is too big. Must be <=4GB\n");
+		fclose(fp);
+		return NULL;
+	}
+
+	i = pathLen;
+	fileName = filePath;
+	do {
+		i--;
+		if (filePath[i] == PATH_SEP) {
+			fileName = &filePath[i+1];
+			break;
+		}
+	} while (i != 0);
+
+	if (strlen(fileName) > 47) {
+		fprintf(stderr, "File name must be <= 47 characters long\n");
+		fclose(fp);
+		return NULL;
+	}
+
+	*dstFileName = fileName;
+	*size = fileSize;
+
+	return fp;
+}
