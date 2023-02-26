@@ -326,6 +326,7 @@ int main(int argc, char *argv[])
 		const uint32_t baseAddr = jf->baseAddr;
 		const uint32_t execAddr = oBoot ? oExec : 0x0;
 
+
 		uploadExec[UPEX_OFF_SIZE_LE+0] = (upSize      ) & 0xff;
 		uploadExec[UPEX_OFF_SIZE_LE+1] = (upSize >>  8) & 0xff;
 		uploadExec[UPEX_OFF_SIZE_LE+2] = (upSize >> 16) & 0xff;
@@ -365,7 +366,8 @@ int main(int argc, char *argv[])
 			printf(" EXECUTE");
 		}
 
-		printf("\n");
+		printf("...");
+		fflush(stdout);
 	} else if (oBoot) {
 		uploadExec[UPEX_OFF_DST_OR_START+0] = (oExec >> 24) & 0xff;
 		uploadExec[UPEX_OFF_DST_OR_START+1] = (oExec >> 16) & 0xff;
@@ -381,6 +383,10 @@ int main(int argc, char *argv[])
 	}
 
 	if (jf || oBoot) {
+		uint32_t percent;
+		bool first = true;
+		
+
 		/*
 		 * Send an upload command over the control interface.
 		 */
@@ -398,18 +404,28 @@ int main(int argc, char *argv[])
 		 * Send the data to the bulk endpoint
 		 */
 		while (jf && (bytesUploaded < jf->dataSize)) {
+			static const int MAX_TRANSFER_SIZE = 16 * 1024;
+			int bytesToTransfer = jf->dataSize - bytesUploaded;
+			if (bytesToTransfer > MAX_TRANSFER_SIZE)
+				bytesToTransfer = MAX_TRANSFER_SIZE;
+
 			CHECKED_USB(libusb_bulk_transfer(hGD,
 					LIBUSB_ENDPOINT_OUT |
 					/* XXX 2 == Bulk out endpoint number */
 					(LIBUSB_ENDPOINT_ADDRESS_MASK & 2),
 					jf->buf + jf->offset + bytesUploaded,
-					jf->dataSize - bytesUploaded,
+					bytesToTransfer,
 					&transferSize,
 					1000 * 60 * 2 /* 2 minute timeout */));
 			bytesUploaded += transferSize;
+			percent = ((uint64_t)bytesUploaded * 100u) / jf->dataSize;
+			if (!first) printf("\b\b\b");
+			else first = false;
+			printf("%2" PRIu32 "%%", percent);
+			fflush(stdout);
 		}
 
-		printf("OK!\n");
+		printf("\nOK!\n");
 	}
 
 	/* Success */
